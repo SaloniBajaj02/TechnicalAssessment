@@ -1,0 +1,44 @@
+import pandas as pd
+df = pd.read_csv('train_transaction.csv')
+
+df['TransactionDate'] = pd.to_datetime('2017-12-01') + pd.to_timedelta(df['TransactionDT'], unit='s')
+df['Day'] = df['TransactionDate'].dt.day
+df['Month'] = df['TransactionDate'].dt.month
+df['Hour'] = df['TransactionDate'].dt.hour
+
+fraud_trends = df[df['isFraud'] == 1].groupby('Day')['TransactionAmt'].sum()
+non_fraud_trends = df[df['isFraud'] == 0].groupby('Day')['TransactionAmt'].sum()
+
+df['fraud_moving_avg'] = fraud_trends.rolling(window=7).mean()  # 7-day window
+
+from statsmodels.tsa.seasonal import seasonal_decompose
+decomposition = seasonal_decompose(fraud_trends, model='additive', period=1)  # Monthly periodicity
+decomposition.plot()
+
+from scipy.stats import zscore
+df['fraud_zscore'] = zscore(fraud_trends)
+anomalies = df[df['fraud_zscore'] > 3]  # Z-score threshold
+
+from sklearn.ensemble import IsolationForest
+
+# Create the IsolationForest model
+model = IsolationForest(contamination=0.01)
+
+# Fit the model and get anomaly scores for fraud_trends
+fraud_trends_anomaly_scores = model.fit_predict(fraud_trends.values.reshape(-1, 1))
+
+# Create a new DataFrame to store the anomaly scores with corresponding days
+fraud_trends_anomalies = pd.DataFrame({'Day': fraud_trends.index, 'anomaly_score': fraud_trends_anomaly_scores})
+
+# Merge the anomaly scores back into the original DataFrame based on 'Day'
+df = pd.merge(df, fraud_trends_anomalies, on='Day', how='left')
+
+
+import plotly.express as px
+fig = px.line(fraud_trends, title='Fraudulent Transactions Over Time')
+fig.show()
+
+plt.scatter(anomalies.index, anomalies.values, color='red', label='Anomalies')
+plt.legend()
+plt.show()
+
